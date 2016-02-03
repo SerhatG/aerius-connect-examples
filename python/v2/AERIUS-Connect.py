@@ -2,11 +2,12 @@
 """
 Dit script is als voorbeeld om het gebruik van AERIUS connect te demonstreren.
 """
+import base64
+import getopt
 import json
 import time
 import sys
 import os
-import getopt
 import websocket
 
 DEBUG_ENABLED = False
@@ -20,8 +21,15 @@ COMMAND_VALIDATE = "validate"
 COMMAND_CONVERT = "convert"
 COMMAND_CALCULATEANDEMAIL = "calculateAndEmail"
 COMMAND_CALCULATEREPORTANDEMAIL = "calculateReportAndEmail"
+COMMAND_MERGE = "merge"
 
-ALL_COMMANDS = [COMMAND_VALIDATE, COMMAND_CONVERT, COMMAND_CALCULATEANDEMAIL, COMMAND_CALCULATEREPORTANDEMAIL]
+ALL_COMMANDS = [
+    COMMAND_VALIDATE,
+    COMMAND_CONVERT,
+    COMMAND_CALCULATEANDEMAIL,
+    COMMAND_CALCULATEREPORTANDEMAIL,
+    COMMAND_MERGE
+]
 
 # JSON BASE will we will fill based on the action chosen
 JSON_BASE = """
@@ -103,6 +111,7 @@ def service_calculate_and_email(inputgml, emailaddress):
 
     call_connect(json_data)
 
+
 def service_calculate_report_and_email(inputgml, emailaddress):
     json_data = get_json(
         'report.calculateReportAndEmail',
@@ -125,6 +134,26 @@ def service_calculate_report_and_email(inputgml, emailaddress):
     )
 
     call_connect(json_data)
+
+
+def service_merge(inputgml, inputgml2, outputfile):
+    call_connect(
+        get_json(
+            'util.merge',
+            {
+                "data": [{
+                    "dataType": "GML",
+                    "contentType": "TEXT",
+                    "data": inputgml
+                }, {
+                    "dataType": "GML",
+                    "contentType": "TEXT",
+                    "data": inputgml2
+                }]
+            }
+        ),
+        outputfile
+    )
 
 
 def process_results(json_data):
@@ -193,9 +222,15 @@ def call_connect(json_data, outputfile=None):
         ws.close()
 
     if json_output and outputfile:
+        outputdata = json_output["result"]["data"].encode("UTF-8")
+        if json_output["result"]["contentType"]:
+            print("Result has contentType:", json_output["result"]["contentType"]);
+            if json_output["result"]["contentType"] == 'BASE64':
+                outputdata = base64.standard_b64decode(outputdata)
+
         print("Writing content to:", outputfile)
-        fileout = open(outputfile, "w+")
-        fileout.write(json_output["result"]["data"].encode('utf8'))
+        fileout = open(outputfile, "wb+")
+        fileout.write(outputdata)
 
 
 def usage(errormessage=None):
@@ -207,7 +242,10 @@ def usage(errormessage=None):
     print("\t", os.path.basename(__file__), "[-d] " + COMMAND_VALIDATE + " <input GML file>")
     print("\t", os.path.basename(__file__), "[-d] " + COMMAND_CONVERT + " <input GML file> <output GML file>")
     print("\t", os.path.basename(__file__), "[-d] " + COMMAND_CALCULATEANDEMAIL + " <input GML file> <email address>")
-    print("\t", os.path.basename(__file__), "[-d] " + COMMAND_CALCULATEREPORTANDEMAIL + " <input GML file> <email address>")
+    print("\t", os.path.basename(__file__), "[-d] " + COMMAND_CALCULATEREPORTANDEMAIL +
+          " <input GML file> <email address>")
+    print("\t", os.path.basename(__file__), "[-d] " + COMMAND_MERGE +
+          " <input GML file 1> <input GML file 2> <output GML file>")
     print()
     print()
     print("-d, --debug")
@@ -217,10 +255,12 @@ def usage(errormessage=None):
     print()
     print()
     print("Actions:")
-    print("- " + COMMAND_VALIDATE + ":", '\t\t', "Validate the GML file")
-    print("- " + COMMAND_CONVERT + ":", '\t\t', "Convert GML file to the latest version")
-    print("- " + COMMAND_CALCULATEANDEMAIL + ":", '\t', "Import and calculate the GML and email the results")
+    print("- " + COMMAND_VALIDATE + ":", '\t\t\t', "Validate the GML file")
+    print("- " + COMMAND_CONVERT + ":", '\t\t\t', "Convert GML file to the latest version")
+    print("- " + COMMAND_CALCULATEANDEMAIL + ":", '\t\t', "Import and calculate the GML and email the results")
     print("- " + COMMAND_CALCULATEREPORTANDEMAIL + ":", '\t', "Import and produce a NBWET PDF and email the results")
+    print("- " + COMMAND_MERGE + ":", '\t\t\t',
+          "Merge given GML files and return single GML containing the highest depositions of the two")
 
     if errormessage:
         sys.exit(1)
@@ -236,10 +276,12 @@ def main(argv):
         usage(1)
 
     inputgml = None
+    inputgml2 = None
     email_address = None
     outputfile = None
 
     needs_input_file = True
+    needs_input_file2 = False
     needs_output_file = False
     needs_email_address = False
 
@@ -269,16 +311,25 @@ def main(argv):
         elif command_to_execute == COMMAND_CALCULATEREPORTANDEMAIL:
             needs_email_address = True
             amount_of_args_expected = 3
-			
+        elif command_to_execute == COMMAND_MERGE:
+            needs_input_file2 = True
+            needs_output_file = True
+            amount_of_args_expected = 4
+
         if len(remainder) != amount_of_args_expected:
             usage("Unexpected amount of args received")
 
+        outputfile_argument_position = 1
         if needs_input_file:
             inputgml = read_file_content(remainder[1])
+            outputfile_argument_position += 1
+        if needs_input_file2:
+            inputgml2 = read_file_content(remainder[2])
+            outputfile_argument_position += 1
         if needs_email_address:
             email_address = remainder[2]
         if needs_output_file:
-            outputfile = remainder[2]
+            outputfile = remainder[outputfile_argument_position]
 
         if command_to_execute == COMMAND_CONVERT:
             service_convert2gml(inputgml, outputfile)
@@ -288,7 +339,9 @@ def main(argv):
             service_calculate_and_email(inputgml, email_address)
         elif command_to_execute == COMMAND_CALCULATEREPORTANDEMAIL:
             service_calculate_report_and_email(inputgml, email_address)
-			
+        elif command_to_execute == COMMAND_MERGE:
+            service_merge(inputgml, inputgml2, outputfile)
+
     else:
         usage("No command specified")
 
